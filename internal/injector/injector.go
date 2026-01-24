@@ -5,7 +5,17 @@ import (
 	"os/exec"
 )
 
-func Run(command string, args []string, secrets map[string]string) error {
+type Runner interface {
+	Run(command string, args []string, secrets map[string]string) error
+}
+
+type runner struct{}
+
+func NewRunner() Runner {
+	return &runner{}
+}
+
+func (r *runner) Run(command string, args []string, secrets map[string]string) error {
 	cmd := exec.Command(command, args...)
 
 	env := os.Environ()
@@ -19,4 +29,9 @@ func Run(command string, args []string, secrets map[string]string) error {
 	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
+}
+
+func Run(command string, args []string, secrets map[string]string) error {
+	r := NewRunner()
+	return r.Run(command, args, secrets)
 }

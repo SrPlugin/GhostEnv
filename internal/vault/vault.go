@@ -8,17 +8,23 @@ import (
 	"github.com/SrPlugin/GhostEnv/internal/storage"
 )
 
-type Service struct {
+type Service interface {
+	Load(password string) (map[string]string, error)
+	Save(secrets map[string]string, password string) error
+	Exists() bool
+}
+
+type service struct {
 	vaultPath string
 }
 
-func NewService(vaultPath string) *Service {
-	return &Service{
+func NewService(vaultPath string) Service {
+	return &service{
 		vaultPath: vaultPath,
 	}
 }
 
-func (s *Service) Load(password string) (map[string]string, error) {
+func (s *service) Load(password string) (map[string]string, error) {
 	data, err := storage.LoadVault(s.vaultPath)
 	if err != nil {
 		return nil, err
@@ -37,7 +43,7 @@ func (s *Service) Load(password string) (map[string]string, error) {
 	return secrets, nil
 }
 
-func (s *Service) Save(secrets map[string]string, password string) error {
+func (s *service) Save(secrets map[string]string, password string) error {
 	payload, err := json.Marshal(secrets)
 	if err != nil {
 		return fmt.Errorf("failed to marshal secrets: %w", err)
@@ -55,6 +61,6 @@ func (s *Service) Save(secrets map[string]string, password string) error {
 	return nil
 }
 
-func (s *Service) Exists() bool {
+func (s *service) Exists() bool {
 	return storage.VaultExists(s.vaultPath)
 }

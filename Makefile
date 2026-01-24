@@ -1,5 +1,5 @@
 BINARY_NAME=ghostenv
-MAIN_PATH=./cmd/ghostenv/main.go
+MAIN_PACKAGE=./cmd/ghostenv
 INSTALL_PATH=/usr/local/bin
 BUILD_DIR=./bin
 
@@ -8,7 +8,7 @@ BUILD_DIR=./bin
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	@go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
+	@go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PACKAGE)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
 install: build
