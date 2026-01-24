@@ -1,0 +1,64 @@
+BINARY_NAME=ghostenv.exe
+MAIN_PACKAGE=./cmd/ghostenv
+INSTALL_PATH=C:\Program Files\GhostEnv
+BUILD_DIR=./bin
+
+.PHONY: build install clean tidy test help lint vet fmt
+
+build:
+	@echo Building $(BINARY_NAME)...
+	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
+	@go build -o $(BUILD_DIR)\$(BINARY_NAME) $(MAIN_PACKAGE)
+	@echo Build complete: $(BUILD_DIR)\$(BINARY_NAME)
+
+install: build
+	@echo Installing to $(INSTALL_PATH)...
+	@if not exist "$(INSTALL_PATH)" mkdir "$(INSTALL_PATH)"
+	@copy $(BUILD_DIR)\$(BINARY_NAME) "$(INSTALL_PATH)\$(BINARY_NAME)"
+	@echo Installed. Add $(INSTALL_PATH) to your PATH.
+
+clean:
+	@echo Cleaning up...
+	@if exist $(BUILD_DIR) rmdir /s /q $(BUILD_DIR)
+	@if exist $(BINARY_NAME) del /q $(BINARY_NAME)
+	@del /q *.gev 2>nul
+	@del /q vault.gev 2>nul
+	@echo Clean complete.
+
+tidy:
+	@echo Tidying modules...
+	@go mod tidy
+	@echo Modules tidied.
+
+test:
+	@echo Running tests...
+	@go test -v ./...
+
+lint:
+	@echo Running linter...
+	@go vet ./...
+	@echo Lint complete.
+
+vet:
+	@echo Running go vet...
+	@go vet ./...
+	@echo Vet complete.
+
+fmt:
+	@echo Formatting code...
+	@go fmt ./...
+	@echo Format complete.
+
+help:
+	@echo Usage: make [target]
+	@echo.
+	@echo Targets:
+	@echo   build     Build the binary
+	@echo   install   Build and install to $(INSTALL_PATH)
+	@echo   clean     Remove build artifacts and vault files
+	@echo   tidy      Run go mod tidy
+	@echo   test      Run tests
+	@echo   lint      Run go vet
+	@echo   vet       Run go vet
+	@echo   fmt       Format code with go fmt
+	@echo   help      Show this help message

@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"syscall"
+	"os"
 	"unsafe"
 
 	"golang.org/x/term"
@@ -20,7 +20,7 @@ func getPassword(masterPassword string) (string, error) {
 	}
 
 	fmt.Print("Enter Master Password: ")
-	bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+	bytePassword, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	if err != nil {
 		return "", fmt.Errorf("failed to read password: %w", err)
