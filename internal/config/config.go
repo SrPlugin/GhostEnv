@@ -13,3 +13,8 @@ const (
 	Argon2Memory  = 64 * 1024
 	Argon2Threads = 4
 )
+
+const (
+	DefaultEnvironment = "dev"
+	ProjectVaultDir    = ".ghostenv"
+)

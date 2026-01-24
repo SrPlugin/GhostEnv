@@ -3,26 +3,19 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/SrPlugin/GhostEnv/internal/config"
 	"github.com/SrPlugin/GhostEnv/internal/injector"
-	"github.com/SrPlugin/GhostEnv/internal/vault"
 	"github.com/spf13/cobra"
 )
 
-var masterPassword string
-
-func getVaultPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, config.VaultFileName)
-}
+var (
+	masterPassword string
+	environment    string
+)
 
 func main() {
-	vaultPath := getVaultPath()
-	vaultService := vault.NewService(vaultPath)
 	runner := injector.NewRunner()
-	h := newHandlers(vaultService, runner)
+	h := newHandlers(runner)
 
 	var rootCmd = &cobra.Command{
 		Use:   "ghostenv",
@@ -31,6 +24,7 @@ func main() {
 	}
 
 	rootCmd.PersistentFlags().StringVarP(&masterPassword, "pass", "p", "", "Master password for the vault (optional, will prompt if missing)")
+	rootCmd.PersistentFlags().StringVarP(&environment, "env", "e", "", "Environment name (default: dev, uses global vault if not in project)")
 
 	var setCmd = &cobra.Command{
 		Use:  "set [KEY] [VALUE]",
@@ -40,7 +34,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("password error: %w", err)
 			}
-			return h.handleSet(args[0], args[1], pw)
+			return h.handleSet(args[0], args[1], pw, environment)
 		},
 	}
 
@@ -52,7 +46,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("password error: %w", err)
 			}
-			return h.handleRun(args[0], args[1:], pw)
+			return h.handleRun(args[0], args[1:], pw, environment)
 		},
 	}
 
@@ -64,7 +58,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("password error: %w", err)
 			}
-			return h.handleList(pw)
+			return h.handleList(pw, environment)
 		},
 	}
 
@@ -77,7 +71,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("password error: %w", err)
 			}
-			return h.handleGet(args[0], pw)
+			return h.handleGet(args[0], pw, environment)
 		},
 	}
 
@@ -90,7 +84,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("password error: %w", err)
 			}
-			return h.handleRemove(args[0], pw)
+			return h.handleRemove(args[0], pw, environment)
 		},
 	}
 
@@ -103,7 +97,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("password error: %w", err)
 			}
-			return h.handleImport(args[0], pw)
+			return h.handleImport(args[0], pw, environment)
 		},
 	}
 
@@ -115,7 +109,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("password error: %w", err)
 			}
-			return h.handleExport(pw)
+			return h.handleExport(pw, environment)
 		},
 	}
 

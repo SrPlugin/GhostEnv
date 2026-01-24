@@ -1,1 +1,5 @@
 tools
+.ghostenv/
+*.gev
+bin/
+ghostenv

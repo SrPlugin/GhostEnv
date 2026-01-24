@@ -13,25 +13,32 @@ import (
 )
 
 type handlers struct {
-	vaultService vault.Service
-	runner       injector.Runner
+	runner injector.Runner
 }
 
-func newHandlers(vaultService vault.Service, runner injector.Runner) *handlers {
+func newHandlers(runner injector.Runner) *handlers {
 	return &handlers{
-		vaultService: vaultService,
-		runner:       runner,
+		runner: runner,
 	}
 }
 
-func (h *handlers) handleSet(key, value, password string) error {
+func (h *handlers) getVaultService(environment string) (vault.Service, error) {
+	return getVaultService(environment)
+}
+
+func (h *handlers) handleSet(key, value, password, environment string) error {
 	if err := validator.ValidateKey(key); err != nil {
 		return fmt.Errorf("invalid key: %w", err)
 	}
 
+	vaultService, err := h.getVaultService(environment)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
 	secrets := make(map[string]string)
-	if h.vaultService.Exists() {
-		existingSecrets, err := h.vaultService.Load(password)
+	if vaultService.Exists() {
+		existingSecrets, err := vaultService.Load(password)
 		if err != nil && err != storage.ErrVaultNotFound {
 			return fmt.Errorf("failed to load existing vault: %w", err)
 		}
@@ -41,7 +48,7 @@ func (h *handlers) handleSet(key, value, password string) error {
 	}
 
 	secrets[key] = value
-	if err := h.vaultService.Save(secrets, password); err != nil {
+	if err := vaultService.Save(secrets, password); err != nil {
 		return fmt.Errorf("failed to save secret: %w", err)
 	}
 
@@ -49,8 +56,13 @@ func (h *handlers) handleSet(key, value, password string) error {
 	return nil
 }
 
-func (h *handlers) handleRun(command string, args []string, password string) error {
-	secrets, err := h.vaultService.Load(password)
+func (h *handlers) handleRun(command string, args []string, password, environment string) error {
+	vaultService, err := h.getVaultService(environment)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
+	secrets, err := vaultService.Load(password)
 	if err != nil {
 		if err == storage.ErrVaultNotFound {
 			return fmt.Errorf("vault not found. Run 'set' first")
@@ -65,8 +77,13 @@ func (h *handlers) handleRun(command string, args []string, password string) err
 	return nil
 }
 
-func (h *handlers) handleList(password string) error {
-	secrets, err := h.vaultService.Load(password)
+func (h *handlers) handleList(password, environment string) error {
+	vaultService, err := h.getVaultService(environment)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
+	secrets, err := vaultService.Load(password)
 	if err != nil {
 		if err == storage.ErrVaultNotFound {
 			return fmt.Errorf("vault not found")
@@ -82,8 +99,13 @@ func (h *handlers) handleList(password string) error {
 	return nil
 }
 
-func (h *handlers) handleGet(key, password string) error {
-	secrets, err := h.vaultService.Load(password)
+func (h *handlers) handleGet(key, password, environment string) error {
+	vaultService, err := h.getVaultService(environment)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
+	secrets, err := vaultService.Load(password)
 	if err != nil {
 		if err == storage.ErrVaultNotFound {
 			return fmt.Errorf("vault not found")
@@ -99,8 +121,13 @@ func (h *handlers) handleGet(key, password string) error {
 	return nil
 }
 
-func (h *handlers) handleRemove(key, password string) error {
-	secrets, err := h.vaultService.Load(password)
+func (h *handlers) handleRemove(key, password, environment string) error {
+	vaultService, err := h.getVaultService(environment)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
+	secrets, err := vaultService.Load(password)
 	if err != nil {
 		if err == storage.ErrVaultNotFound {
 			return fmt.Errorf("vault not found")
@@ -113,7 +140,7 @@ func (h *handlers) handleRemove(key, password string) error {
 	}
 
 	delete(secrets, key)
-	if err := h.vaultService.Save(secrets, password); err != nil {
+	if err := vaultService.Save(secrets, password); err != nil {
 		return fmt.Errorf("failed to save vault: %w", err)
 	}
 
@@ -121,15 +148,20 @@ func (h *handlers) handleRemove(key, password string) error {
 	return nil
 }
 
-func (h *handlers) handleImport(filePath, password string) error {
+func (h *handlers) handleImport(filePath, password, environment string) error {
+	vaultService, err := h.getVaultService(environment)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	secrets := make(map[string]string)
-	if h.vaultService.Exists() {
-		existingSecrets, err := h.vaultService.Load(password)
+	if vaultService.Exists() {
+		existingSecrets, err := vaultService.Load(password)
 		if err != nil && err != storage.ErrVaultNotFound {
 			return fmt.Errorf("failed to load existing vault: %w", err)
 		}
@@ -159,7 +191,7 @@ func (h *handlers) handleImport(filePath, password string) error {
 		}
 	}
 
-	if err := h.vaultService.Save(secrets, password); err != nil {
+	if err := vaultService.Save(secrets, password); err != nil {
 		return fmt.Errorf("failed to save vault: %w", err)
 	}
 
@@ -167,8 +199,13 @@ func (h *handlers) handleImport(filePath, password string) error {
 	return nil
 }
 
-func (h *handlers) handleExport(password string) error {
-	secrets, err := h.vaultService.Load(password)
+func (h *handlers) handleExport(password, environment string) error {
+	vaultService, err := h.getVaultService(environment)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
+	secrets, err := vaultService.Load(password)
 	if err != nil {
 		if err == storage.ErrVaultNotFound {
 			return fmt.Errorf("vault not found")
