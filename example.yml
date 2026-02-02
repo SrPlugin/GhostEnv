@@ -1,0 +1,181 @@
+---
+project:
+  name: invitex-api
+  version: "1.0.0"
+  default_env: dev
+
+storage:
+  vault_dir: "./.ghostenv/vaults"
+  recursive_search: true
+  auto_backup:
+    enabled: true
+    retention_days: 7
+    path: "./.ghostenv/backups"
+  environments:
+    dev: { dir: "dev" }
+    staging: { dir: "staging" }
+    production: { dir: "prod" }
+
+security:
+  argon2:
+    memory: 64MB
+    iterations: 2
+    parallelism: 4
+  policy:
+    max_auth_attempts: 3
+    force_memory_zeroing: true
+    disallow_password_flag_in_prod: true
+
+microservices:
+  inheritance:
+    enabled: true
+    shared_vault: "./.ghostenv/vaults/common.gev"
+  server:
+    host: "127.0.0.1"
+    port: 8080
+    use_tls: true
+  postgres:
+    enabled: true
+    host: "localhost"
+    port: 5432
+    database: "invitex"
+    user_key: "DB_USER"
+    pass_key: "DB_PASSWORD"
+    ssl_mode: "prefer"
+
+scripts:
+  dev: "run --env dev -- node dist/main.js"
+  prod: "run --env production -- node dist/main.js"
+  test: "run --env test -- go test ./..."
+
+audit:
+  enabled: true
+  output: "file"
+  file_path: "./.ghostenv/audit.log"
+  log_level: "info"
+  mask_keys: false
+
+export:
+  default_format: "env"
+  include_timestamp: true
+
+---
+project:
+  name: payments-service
+  version: "2.0.0"
+  default_env: dev
+
+storage:
+  vault_dir: "./.ghostenv/vaults"
+  recursive_search: true
+  auto_backup:
+    enabled: true
+    retention_days: 14
+    path: "./.ghostenv/backups"
+  environments:
+    dev: { dir: "dev" }
+    production: { dir: "prod" }
+
+security:
+  argon2:
+    memory: 128MB
+    iterations: 3
+    parallelism: 4
+  policy:
+    max_auth_attempts: 5
+    force_memory_zeroing: true
+    disallow_password_flag_in_prod: true
+
+microservices:
+  inheritance:
+    enabled: true
+    shared_vault: "./.ghostenv/vaults/shared.gev"
+  server:
+    host: "0.0.0.0"
+    port: 8081
+    use_tls: true
+  postgres:
+    enabled: true
+    host: "db.internal"
+    port: 5432
+    database: "payments"
+    user_key: "POSTGRES_USER"
+    pass_key: "POSTGRES_PASSWORD"
+    ssl_mode: "require"
+
+scripts:
+  dev: "run --env dev -- go run ./cmd/server"
+  prod: "run --env production -- ./bin/server"
+  migrate: "run --env production -- ./bin/migrate"
+
+audit:
+  enabled: true
+  output: "file"
+  file_path: "./.ghostenv/audit.log"
+  log_level: "info"
+  mask_keys: true
+
+export:
+  default_format: "json"
+  include_timestamp: true
+
+---
+project:
+  name: frontend-app
+  version: "0.1.0"
+  default_env: dev
+
+storage:
+  vault_dir: "./.ghostenv/vaults"
+  recursive_search: true
+  auto_backup:
+    enabled: false
+    retention_days: 3
+    path: "./.ghostenv/backups"
+  environments:
+    dev: { dir: "dev" }
+    staging: { dir: "staging" }
+    production: { dir: "prod" }
+
+security:
+  argon2:
+    memory: 64MB
+    iterations: 1
+    parallelism: 4
+  policy:
+    max_auth_attempts: 5
+    force_memory_zeroing: true
+    disallow_password_flag_in_prod: false
+
+microservices:
+  inheritance:
+    enabled: false
+    shared_vault: ""
+  server:
+    host: "127.0.0.1"
+    port: 8080
+    use_tls: false
+  postgres:
+    enabled: false
+    host: ""
+    port: 5432
+    database: ""
+    user_key: ""
+    pass_key: ""
+    ssl_mode: "prefer"
+
+scripts:
+  dev: "run --env dev -- npm run dev"
+  build: "run --env production -- npm run build"
+  test: "run --env test -- npm test"
+
+audit:
+  enabled: true
+  output: "file"
+  file_path: "./.ghostenv/audit.log"
+  log_level: "debug"
+  mask_keys: false
+
+export:
+  default_format: "env"
+  include_timestamp: false

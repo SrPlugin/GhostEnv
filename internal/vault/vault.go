@@ -9,8 +9,8 @@ import (
 )
 
 type Service interface {
-	Load(password string) (map[string]string, error)
-	Save(secrets map[string]string, password string) error
+	Load(password []byte) (map[string]string, error)
+	Save(secrets map[string]string, password []byte) error
 	Exists() bool
 }
 
@@ -24,7 +24,13 @@ func NewService(vaultPath string) Service {
 	}
 }
 
-func (s *service) Load(password string) (map[string]string, error) {
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+func (s *service) Load(password []byte) (map[string]string, error) {
 	data, err := storage.LoadVault(s.vaultPath)
 	if err != nil {
 		return nil, err
@@ -35,6 +41,8 @@ func (s *service) Load(password string) (map[string]string, error) {
 		return nil, fmt.Errorf("decryption failed: %w", err)
 	}
 
+	defer zeroBytes(decrypted)
+
 	var secrets map[string]string
 	if err := json.Unmarshal(decrypted, &secrets); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal vault data: %w", err)
@@ -43,7 +51,7 @@ func (s *service) Load(password string) (map[string]string, error) {
 	return secrets, nil
 }
 
-func (s *service) Save(secrets map[string]string, password string) error {
+func (s *service) Save(secrets map[string]string, password []byte) error {
 	payload, err := json.Marshal(secrets)
 	if err != nil {
 		return fmt.Errorf("failed to marshal secrets: %w", err)

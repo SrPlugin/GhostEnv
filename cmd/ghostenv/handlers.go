@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/SrPlugin/GhostEnv/internal/audit"
+	"github.com/SrPlugin/GhostEnv/internal/config"
 	"github.com/SrPlugin/GhostEnv/internal/injector"
+	"github.com/SrPlugin/GhostEnv/internal/shamir"
 	"github.com/SrPlugin/GhostEnv/internal/storage"
 	"github.com/SrPlugin/GhostEnv/internal/validator"
 	"github.com/SrPlugin/GhostEnv/internal/vault"
@@ -26,8 +31,20 @@ func (h *handlers) getVaultService(environment string) (vault.Service, error) {
 	return getVaultService(environment)
 }
 
-func (h *handlers) handleSet(key, value, password, environment string) error {
-	if err := validator.ValidateKey(key); err != nil {
+func auditLog(action, vaultPath, env, key string, err error) {
+	success := err == nil
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	audit.Log(action, vaultPath, env, key, success, msg)
+}
+
+func (h *handlers) handleSet(key, value string, password []byte, environment string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionSet, vaultPath, environment, key, err) }()
+	if err = validator.ValidateKey(key); err != nil {
 		return fmt.Errorf("invalid key: %w", err)
 	}
 
@@ -48,7 +65,7 @@ func (h *handlers) handleSet(key, value, password, environment string) error {
 	}
 
 	secrets[key] = value
-	if err := vaultService.Save(secrets, password); err != nil {
+	if err = vaultService.Save(secrets, password); err != nil {
 		return fmt.Errorf("failed to save secret: %w", err)
 	}
 
@@ -56,7 +73,10 @@ func (h *handlers) handleSet(key, value, password, environment string) error {
 	return nil
 }
 
-func (h *handlers) handleRun(command string, args []string, password, environment string) error {
+func (h *handlers) handleRun(command string, args []string, password []byte, environment string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionRun, vaultPath, environment, command, err) }()
 	vaultService, err := h.getVaultService(environment)
 	if err != nil {
 		return fmt.Errorf("failed to resolve vault: %w", err)
@@ -70,14 +90,17 @@ func (h *handlers) handleRun(command string, args []string, password, environmen
 		return fmt.Errorf("failed to load vault: %w", err)
 	}
 
-	if err := h.runner.Run(command, args, secrets); err != nil {
+	if err = h.runner.Run(command, args, secrets); err != nil {
 		return fmt.Errorf("command execution failed: %w", err)
 	}
 
 	return nil
 }
 
-func (h *handlers) handleList(password, environment string) error {
+func (h *handlers) handleList(password []byte, environment string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionList, vaultPath, environment, "", err) }()
 	vaultService, err := h.getVaultService(environment)
 	if err != nil {
 		return fmt.Errorf("failed to resolve vault: %w", err)
@@ -99,7 +122,10 @@ func (h *handlers) handleList(password, environment string) error {
 	return nil
 }
 
-func (h *handlers) handleGet(key, password, environment string) error {
+func (h *handlers) handleGet(key string, password []byte, environment string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionGet, vaultPath, environment, key, err) }()
 	vaultService, err := h.getVaultService(environment)
 	if err != nil {
 		return fmt.Errorf("failed to resolve vault: %w", err)
@@ -121,7 +147,10 @@ func (h *handlers) handleGet(key, password, environment string) error {
 	return nil
 }
 
-func (h *handlers) handleRemove(key, password, environment string) error {
+func (h *handlers) handleRemove(key string, password []byte, environment string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionRemove, vaultPath, environment, key, err) }()
 	vaultService, err := h.getVaultService(environment)
 	if err != nil {
 		return fmt.Errorf("failed to resolve vault: %w", err)
@@ -148,7 +177,10 @@ func (h *handlers) handleRemove(key, password, environment string) error {
 	return nil
 }
 
-func (h *handlers) handleImport(filePath, password, environment string) error {
+func (h *handlers) handleImport(filePath string, password []byte, environment string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionImport, vaultPath, environment, filePath, err) }()
 	vaultService, err := h.getVaultService(environment)
 	if err != nil {
 		return fmt.Errorf("failed to resolve vault: %w", err)
@@ -199,7 +231,18 @@ func (h *handlers) handleImport(filePath, password, environment string) error {
 	return nil
 }
 
-func (h *handlers) handleExport(password, environment string) error {
+func (h *handlers) handleExport(password []byte, environment, format, outputPath string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionExport, vaultPath, environment, "", err) }()
+	if format == "" {
+		if c := config.Current(); c != nil && c.Export.DefaultFormat != "" {
+			format = c.Export.DefaultFormat
+		}
+		if format == "" {
+			format = "json"
+		}
+	}
 	vaultService, err := h.getVaultService(environment)
 	if err != nil {
 		return fmt.Errorf("failed to resolve vault: %w", err)
@@ -213,11 +256,162 @@ func (h *handlers) handleExport(password, environment string) error {
 		return fmt.Errorf("failed to load vault: %w", err)
 	}
 
-	output, err := json.MarshalIndent(secrets, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal secrets: %w", err)
+	var out []byte
+	switch format {
+	case "env":
+		var b strings.Builder
+		for k, v := range secrets {
+			b.WriteString(k)
+			b.WriteString("=")
+			b.WriteString(v)
+			b.WriteString("\n")
+		}
+		out = []byte(b.String())
+	default:
+		var err error
+		out, err = json.MarshalIndent(secrets, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal secrets: %w", err)
+		}
 	}
 
-	fmt.Println(string(output))
+	if outputPath != "" {
+		dir := filepath.Dir(outputPath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create output directory: %w", err)
+		}
+		if err := os.WriteFile(outputPath, out, 0600); err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		fmt.Printf("Exported to %s\n", outputPath)
+	} else {
+		fmt.Println(string(out))
+	}
+	return nil
+}
+
+func (h *handlers) handleChangePassword(currentPassword, newPassword []byte, environment string) (err error) {
+	defer zeroBytes(currentPassword)
+	defer zeroBytes(newPassword)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionChangePassword, vaultPath, environment, "", err) }()
+	vaultService, err := h.getVaultService(environment)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
+	secrets, err := vaultService.Load(currentPassword)
+	if err != nil {
+		if err == storage.ErrVaultNotFound {
+			return fmt.Errorf("vault not found")
+		}
+		return fmt.Errorf("failed to load vault (wrong password?): %w", err)
+	}
+
+	if err = vaultService.Save(secrets, newPassword); err != nil {
+		return fmt.Errorf("failed to save vault with new password: %w", err)
+	}
+
+	fmt.Println("Password changed successfully")
+	return nil
+}
+
+func (h *handlers) handleStats(password []byte, environment string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, vaultType, err := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionStats, vaultPath, environment, "", err) }()
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault: %w", err)
+	}
+
+	vaultService := vault.NewService(vaultPath)
+	if !vaultService.Exists() {
+		return fmt.Errorf("vault not found")
+	}
+
+	secrets, err := vaultService.Load(password)
+	if err != nil {
+		if err == storage.ErrVaultNotFound {
+			return fmt.Errorf("vault not found")
+		}
+		return fmt.Errorf("failed to load vault: %w", err)
+	}
+
+	modTime, err := storage.VaultModTime(vaultPath)
+	if err != nil {
+		modTime = time.Time{}
+	}
+
+	envName := environment
+	if envName == "" {
+		envName = "dev"
+	}
+
+	fmt.Println("Vault Statistics")
+	fmt.Println("----------------")
+	fmt.Printf("Path:        %s\n", vaultPath)
+	fmt.Printf("Type:        %s\n", vaultType)
+	fmt.Printf("Environment: %s\n", envName)
+	fmt.Printf("Keys:        %d\n", len(secrets))
+	if !modTime.IsZero() {
+		fmt.Printf("Modified:    %s\n", modTime.Format(time.RFC3339))
+	}
+	return nil
+}
+
+func (h *handlers) handleCreateShares(parts, threshold int, outputDir string, password []byte, environment string) (err error) {
+	defer zeroBytes(password)
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionCreateShares, vaultPath, environment, outputDir, err) }()
+
+	if parts < 2 || parts > 255 {
+		return fmt.Errorf("parts must be between 2 and 255, got %d", parts)
+	}
+	if threshold < 2 || threshold > parts {
+		return fmt.Errorf("threshold must be between 2 and parts (%d), got %d", parts, threshold)
+	}
+
+	shares, err := shamir.SplitSecret(password, parts, threshold)
+	if err != nil {
+		return fmt.Errorf("failed to split secret: %w", err)
+	}
+	defer shamir.ZeroShares(shares)
+
+	for i, share := range shares {
+		path := filepath.Join(outputDir, fmt.Sprintf("share-%d.txt", i+1))
+		if err := shamir.WriteShareToFile(share, path); err != nil {
+			return fmt.Errorf("failed to write share %d: %w", i+1, err)
+		}
+		fmt.Printf("Written %s\n", path)
+	}
+	fmt.Printf("Created %d shares; %d required to recover.\n", parts, threshold)
+	return nil
+}
+
+func (h *handlers) handleRecover(sharePaths []string, environment string) (err error) {
+	vaultPath, _, _ := vault.GetVaultPath(environment)
+	defer func() { auditLog(audit.ActionRecover, vaultPath, environment, "", err) }()
+
+	if len(sharePaths) < 2 {
+		return fmt.Errorf("at least 2 share files required")
+	}
+
+	shares := make([][]byte, 0, len(sharePaths))
+	for _, p := range sharePaths {
+		data, err := shamir.ReadShareFromFile(p)
+		if err != nil {
+			return fmt.Errorf("failed to read share %s: %w", p, err)
+		}
+		shares = append(shares, data)
+	}
+	defer shamir.ZeroShares(shares)
+
+	recovered, err := shamir.CombineShares(shares)
+	if err != nil {
+		return fmt.Errorf("failed to combine shares: %w", err)
+	}
+	defer zeroBytes(recovered)
+
+	fmt.Println(string(recovered))
 	return nil
 }

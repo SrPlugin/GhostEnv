@@ -4,6 +4,7 @@ const (
 	SaltSize      = 16
 	KeySize       = 32
 	NonceSize     = 12
+	HMACSize      = 32
 	VaultFileName = ".ghostenv.gev"
 	VaultFilePerm = 0600
 )

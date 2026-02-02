@@ -19,7 +19,15 @@ The tool operates at the operating system level, injecting decrypted environment
 - **Language Agnostic**: Works with any runtime that reads environment variables
 - **Cross-Platform**: Supports Linux, macOS, and Windows
 - **Input Validation**: Validates keys and prevents invalid characters
-- **Secure Password Handling**: Memory zeroing after password use
+- **Secure Password Handling**: Passwords and secrets kept in `[]byte` and zeroed after use to avoid lingering in RAM
+- **Vault Integrity (HMAC)**: Each vault file includes an HMAC; tampering or corruption is detected and the vault is refused
+- **Atomic Writes**: Saves go to a temporary file then rename, so a crash during write does not corrupt the vault
+- **Hide Password from Process List**: Prefer `GHOSTENV_PASS` environment variable over `-p` so the password does not appear in `ps aux`
+- **Version Command**: Print version and build information
+- **Change Password**: Re-encrypt vault with a new master password
+- **Stats**: Vault statistics (path, type, environment, key count, last modified)
+- **Export Formats**: Export as JSON or `.env` with `--format`; write to a file with `--output`
+- **Shamir's Secret Sharing**: Split the master password into N shares; recover it with K shares (`create-shares`, `recover`)
 
 ## Installation
 
@@ -167,21 +175,117 @@ The import command:
 
 #### Export Secrets
 
-Export all secrets as JSON:
+Export secrets in JSON or `.env` format, to stdout or to a file (useful for CI/CD or sharing config):
 
 ```bash
-# Export to stdout
+# Export as JSON to stdout (default)
 ghostenv export
 
-# Export from specific environment
-ghostenv --env production export
+# Export as .env format
+ghostenv export --format env
+ghostenv export -f env
 
-# Save to file
-ghostenv export > secrets.json
+# Write to file
+ghostenv export --output secrets.json
+ghostenv export -o .env.production -f env
 
-# Export with password flag
-ghostenv -p "password" export | jq
+# From specific environment
+ghostenv --env production export -f env -o .env.prod
+
+# Prefer GHOSTENV_PASS so password is not visible in process list
+export GHOSTENV_PASS="your-password"
+ghostenv export -o secrets.json
 ```
+
+#### Version
+
+Print version and build information:
+
+```bash
+ghostenv version
+```
+
+Output example:
+```
+ghostenv version 0.1.0
+Go version: go1.25.5
+```
+
+#### Change Password
+
+Change the master password for the vault. You will be prompted for the current password and then for the new password (twice to confirm):
+
+```bash
+# Change password for current environment
+ghostenv change-password
+
+# Change password for specific environment
+ghostenv --env production change-password
+
+# Provide current password via flag
+ghostenv -p "current-password" change-password
+```
+
+#### Stats
+
+Show vault statistics: path, type (project or global), environment, key count, and last modified time:
+
+```bash
+# Stats for current environment
+ghostenv stats
+
+# Stats for specific environment
+ghostenv --env production stats
+
+# With password flag
+ghostenv -p "password" stats
+```
+
+Output example:
+```
+Vault Statistics
+----------------
+Path:        /home/user/my-project/.ghostenv/dev.gev
+Type:        project
+Environment: dev
+Keys:        5
+Modified:    2026-01-24T12:00:00Z
+```
+
+#### Create Shares (Shamir's Secret Sharing)
+
+Split the master password into N secret shares so that K shares are required to recover it (K-of-N). Useful for backup or team recovery without storing the full password in one place.
+
+```bash
+# Create 3 shares, 2 required to recover (default: -n 3 -k 2)
+ghostenv create-shares --output .ghostenv/shares
+
+# Custom N and K: 5 shares, 3 required
+ghostenv create-shares --parts 5 --threshold 3 --output ./backup-shares
+ghostenv create-shares -n 5 -k 3 -o ./backup-shares
+
+# You will be prompted for the master password (or use GHOSTENV_PASS / -p)
+```
+
+Share files are written as `share-1.txt`, `share-2.txt`, etc. (base64-encoded). Store each share in a separate, secure location. **Do not commit share files to version control.**
+
+#### Recover Master Password from Shares
+
+Recover the master password by combining at least K share files. The recovered password is printed to stdout; use it with `GHOSTENV_PASS` or `change-password` to apply it.
+
+```bash
+# Recover from two share files
+ghostenv recover .ghostenv/shares/share-1.txt .ghostenv/shares/share-2.txt
+
+# Recover and set as environment variable (Linux/macOS)
+export GHOSTENV_PASS=$(ghostenv recover share-1.txt share-2.txt)
+ghostenv list
+
+# Recover then change vault password
+ghostenv recover share-1.txt share-2.txt | xargs -I {} sh -c 'export GHOSTENV_PASS="{}"; ghostenv change-password'
+```
+
+**Security**: The recovered password is printed to stdout. Avoid piping to logs or untrusted commands. Prefer redirecting to a variable or using it only in memory (e.g. `GHOSTENV_PASS`).
 
 #### Run Command with Secrets
 
@@ -209,21 +313,23 @@ ghostenv run -- ./deploy.sh
 
 ### Password Management
 
-The master password protects all secrets in a vault. You can provide it via flag or be prompted:
+The master password protects all secrets in a vault. GhostEnv checks, in order: environment variable `GHOSTENV_PASS`, then flag `-p`, then an interactive prompt.
+
+**Prefer `GHOSTENV_PASS` over `-p`**: Using `-p "password"` makes the password visible in the process list (e.g. `ps aux` on Linux). Use the environment variable so the password is not exposed:
 
 ```bash
-# Prompt for password (recommended for security)
+# Interactive prompt (recommended when typing manually)
 ghostenv set API_KEY "value"
 
-# Provide password via flag (useful for scripts)
-ghostenv -p "your-password" set API_KEY "value"
-
-# Using environment variable (for CI/CD)
+# Environment variable (recommended for scripts and CI/CD; not visible in ps)
 export GHOSTENV_PASS="your-password"
-ghostenv -p "$GHOSTENV_PASS" run -- npm test
+ghostenv run -- npm test
+
+# Flag -p (avoid in production; password may appear in process list)
+ghostenv -p "your-password" set API_KEY "value"
 ```
 
-**Security Note**: Avoid passing passwords via command line in production. Use the prompt or environment variables.
+**Security Note**: Prefer `GHOSTENV_PASS` or an interactive prompt. Avoid `-p` on shared systems or in production.
 
 ### Project Vaults and Environments
 
@@ -372,6 +478,29 @@ ghostenv --env production import .env.production
 # → Imports to .ghostenv/production.gev
 ```
 
+## Configuration
+
+GhostEnv supports a YAML config file for **global** and **per-project** settings. Project config overrides global; missing values use built-in defaults.
+
+### Config file locations
+
+- **Global**: `~/.config/ghostenv/config.yml` or `~/.ghostenv.yml`
+- **Project**: `./.ghostenv.yml` in the project root (same directory as `.ghostenv/` or where the config file lives)
+
+### Schema (see `example.yml`)
+
+| Section | Description |
+|--------|-------------|
+| **project** | `name`, `version`, `default_env` (default environment when `--env` is not set) |
+| **storage** | `vault_dir` (path to vaults), `recursive_search`, `auto_backup` (enabled, retention_days, path), optional `environments` (per-env dir overrides) |
+| **security** | **argon2**: `memory` (e.g. `64MB`), `iterations`, `parallelism`. **policy**: `max_auth_attempts`, `force_memory_zeroing`, `disallow_password_flag_in_prod` |
+| **microservices** | **inheritance**: `enabled`, `shared_vault`. **server**: `host`, `port`, `use_tls`. **postgres**: `enabled`, `host`, `port`, `database`, `user_key` / `pass_key` (vault keys for credentials), `ssl_mode` |
+| **scripts** | Alias commands (e.g. `dev: "run --env dev -- node dist/main.js"`) — for future `ghostenv run <alias>` |
+| **audit** | `enabled`, `output` (file/stdout/syslog), `file_path`, `log_level`, `mask_keys` (redact key names in log) |
+| **export** | `default_format` (json/env), `include_timestamp` |
+
+Project root is detected by the presence of `.ghostenv/` or `.ghostenv.yml`. Relative paths in config (e.g. `./.ghostenv/vaults`) are resolved from the project root.
+
 ## Architecture
 
 ### Project Structure
@@ -387,14 +516,17 @@ GhostEnv/
 ├── internal/
 │   ├── cipher/            # Encryption engine
 │   │   ├── cipher.go      # AES-256-GCM encryption
-│   │   └── kdf.go         # Argon2id key derivation
+│   │   └── kdf.go         # Argon2id key derivation (uses config for Argon2 params)
 │   ├── storage/           # Vault file I/O
 │   ├── vault/             # Vault service layer
 │   │   ├── vault.go       # Vault operations
-│   │   └── resolver.go    # Vault path resolution
+│   │   └── resolver.go    # Vault path resolution (uses config for vault_dir, default_env)
 │   ├── injector/          # Process execution
 │   ├── validator/         # Input validation
-│   └── config/            # Configuration constants
+│   ├── shamir/            # Shamir's Secret Sharing (split/combine)
+│   ├── audit/             # Audit logging (uses config for path, enabled, mask_keys)
+│   └── config/            # Configuration: constants, schema, loader (global + project YAML)
+├── example.yml            # Example config (project, storage, security, policy, microservices, audit, export)
 ├── Makefile               # Build system (Linux/macOS)
 ├── Makefile.windows       # Build system (Windows)
 └── README.md
@@ -408,7 +540,7 @@ GhostEnv/
 - **internal/vault/**: Vault service layer and path resolution (project/env/global)
 - **internal/injector/**: Process execution with environment variable injection
 - **internal/validator/**: Input validation for keys and values
-- **internal/config/**: Centralized configuration constants
+- **internal/config/**: Configuration constants, YAML schema, and loader (global + project merge); drives vault paths, Argon2, audit, export defaults
 
 ### Technology Stack
 
@@ -435,6 +567,16 @@ GhostEnv/
 - **Memory Safety**: Secrets only exist in memory during execution
 - **Password Handling**: Memory zeroing after password use
 
+### Shamir's Secret Sharing
+
+GhostEnv can split the master password into N shares so that K shares (K ≤ N) are required to recover it. This allows:
+
+- **Backup**: Distribute shares to trusted people or locations; no single share reveals the password
+- **Recovery**: Regain access to the vault if the password is lost, by combining enough shares
+- **Team recovery**: Require multiple people to combine their shares (e.g. 2-of-3) to recover access
+
+Shares are stored as base64-encoded files. Keep each share in a separate, secure location and never commit them to version control.
+
 ### Best Practices
 
 - Use strong, unique master passwords
@@ -443,6 +585,7 @@ GhostEnv/
 - Back up vault files securely if needed
 - Rotate secrets regularly
 - Use different environments for different deployment stages
+- Consider Shamir shares for backup: create shares and store them in separate secure locations
 
 ## Why Use GhostEnv
 
